@@ -51,7 +51,7 @@ class WeatherResponse(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def get_home():
     """Serve the main HTML page"""
-    return """
+    return r"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -359,7 +359,8 @@ async def get_home():
                 html += `<p class="sent-note">✅ Also emailed to <strong>${escapeHtml(data.email)}</strong></p>`;
 
                 if (data.analysis) {
-                    html += `<div class="analysis-box"><strong>AI Analysis:</strong><br>${escapeHtml(data.analysis)}</div>`;
+                    const analysisText = typeof data.analysis === 'string' ? data.analysis : JSON.stringify(data.analysis);
+                    html += `<div class="analysis-box"><strong>🤖 AI Analysis:</strong><br>${escapeHtml(analysisText)}</div>`;
                 }
 
                 if (ow && ow.forecasts && ow.forecasts.length) {
@@ -381,7 +382,7 @@ async def get_home():
                     html += `<dl>
                         <dt>Temperature</dt><dd>${escapeHtml(an.temperature)}°C</dd>
                         <dt>Feels Like</dt><dd>${escapeHtml(an.feels_like)}°C</dd>
-                        <dt>Condition</dt><dd>${escapeHtml(an.condition)}</dd>
+                        <dt>Min/Max</dt><dd>${escapeHtml(an.min_temp)}°C / ${escapeHtml(an.max_temp)}°C</dd>
                         <dt>Humidity</dt><dd>${escapeHtml(an.humidity)}%</dd>
                         <dt>Wind Speed</dt><dd>${escapeHtml(an.wind_speed)} m/s</dd>
                         <dt>Cloud Coverage</dt><dd>${escapeHtml(an.cloudiness)}%</dd>
@@ -452,7 +453,7 @@ async def get_home():
 @app.post("/api/weather")
 async def get_weather(city: str = Form(...), email: str = Form(...)):
     """
-    Get weather forecast and send email
+    Get weather forecast and send email with AI analysis
 
     Args:
         city: City name
@@ -480,7 +481,8 @@ async def get_weather(city: str = Form(...), email: str = Form(...)):
                     "success": False,
                     "message": f"Could not find weather data for '{city}'. Please check the city name and try again.",
                     "city": city,
-                    "email": email
+                    "email": email,
+                    "analysis": ""
                 }
             )
 
@@ -490,27 +492,41 @@ async def get_weather(city: str = Form(...), email: str = Form(...)):
             try:
                 print("Analyzing weather with AI agent...")
                 analysis = weather_agent.get_simple_analysis(city, weather_data)
+                # Ensure analysis is a string
+                if not isinstance(analysis, str):
+                    analysis = str(analysis) if analysis else ""
+                print(f"Analysis received: {analysis[:100]}...")
             except Exception as e:
                 print(f"Warning: Could not get AI analysis: {e}")
+                analysis = ""
 
-        # Send email
+        # Send email WITH ANALYSIS
         print(f"Sending email to {email}...")
-        email_sent = email_sender.send_email(email, city, weather_data)
+        email_result = email_sender.send_email(email, city, weather_data, analysis)
+        print(f"Email result: {email_result}")
 
-        if not email_sent:
+        # Ensure email_result is a dict
+        if not isinstance(email_result, dict):
+            print(f"ERROR: email_result is not a dict! Type: {type(email_result)}")
+            email_result = {"success": False,
+                            "error": f"Unexpected return type from email sender: {type(email_result)}"}
+
+        if not email_result.get("success", False):
             return JSONResponse(
-                status_code=500,
+                status_code=502,
                 content={
                     "success": False,
-                    "message": "Failed to send email. Please check your email configuration.",
+                    "message": f"Weather data was fetched, but the email could not be sent: {email_result.get('error', 'Unknown error')}",
                     "city": city,
-                    "email": email
+                    "email": email,
+                    "weather_data": weather_data,
+                    "analysis": analysis
                 }
             )
 
         return {
             "success": True,
-            "message": f"Weather forecast for {city} has been sent to {email}",
+            "message": f"Weather forecast for {city} has been sent to {email} with AI analysis",
             "city": city,
             "email": email,
             "weather_data": weather_data,
@@ -524,8 +540,9 @@ async def get_weather(city: str = Form(...), email: str = Form(...)):
             content={
                 "success": False,
                 "message": f"An error occurred: {str(e)}",
-                "city": city,
-                "email": email
+                "city": "",
+                "email": "",
+                "analysis": ""
             }
         )
 
