@@ -104,16 +104,46 @@ class WeatherAgent:
         calls) - cheaper and faster than the full agent loop."""
         try:
             prompt = f"""
-            Provide a brief weather analysis for {city} based on this data:
+              Provide a brief weather analysis for {city} based on this data:
 
-            {json.dumps(weather_data, indent=2)}
+              {json.dumps(weather_data, indent=2)}
 
-            Include: temperature range, conditions, and one key recommendation.
-            Keep it under 100 words.
-            """
+              Include: temperature range, conditions, and one key recommendation.
+              Keep it under 100 words.
+              """
 
             response = self.llm.invoke(prompt)
-            return response.content
+            text = self._extract_text_from_response(response)
+            return text
 
         except Exception as e:
             return f"Unable to generate analysis: {str(e)}"
+
+    def _extract_text_from_response(self, response) -> str:
+        """Extract plain text from LLM response, handling various formats."""
+        if isinstance(response, str):
+            return response
+
+        if hasattr(response, 'content'):
+            content = response.content
+
+            # If content is a string, return it
+            if isinstance(content, str):
+                return content
+
+            # If content is a list of message objects with 'text' field
+            if isinstance(content, list) and len(content) > 0:
+                if isinstance(content[0], dict) and 'text' in content[0]:
+                    return content[0]['text']
+                # Try to extract text from first item if it has content
+                if hasattr(content[0], 'text'):
+                    return content[0].text
+
+            # If content is a dict with 'text' field
+            if isinstance(content, dict) and 'text' in content:
+                return content['text']
+
+            # Fallback: convert to string
+            return str(content)
+
+        return str(response)

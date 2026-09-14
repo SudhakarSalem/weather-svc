@@ -5,21 +5,22 @@ from email.mime.multipart import MIMEMultipart
 from typing import Dict
 import asyncio
 
+
 class EmailSender:
     """Handle email sending for weather updates"""
-    
+
     def __init__(self):
         self.smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
         self.smtp_port = int(os.getenv("SMTP_PORT", 587))
         self.sender_email = os.getenv("SENDER_EMAIL")
         self.sender_password = os.getenv("SENDER_PASSWORD")
-    
-    def create_weather_email_body(self, city: str, weather_data: Dict) -> str:
-        """Create HTML email body with weather information"""
-        
+
+    def create_weather_email_body(self, city: str, weather_data: Dict, analysis: str = "") -> str:
+        """Create HTML email body with weather information and AI analysis"""
+
         openweather = weather_data.get("openweather", {})
         api_ninjas = weather_data.get("api_ninjas", {})
-        
+
         html_body = f"""
         <html>
             <head>
@@ -32,6 +33,8 @@ class EmailSender:
                     .temp {{ font-size: 24px; font-weight: bold; color: #e74c3c; }}
                     .description {{ font-style: italic; color: #7f8c8d; }}
                     .forecast {{ background-color: #e8f4f8; padding: 10px; margin: 5px 0; border-left: 4px solid #3498db; }}
+                    .analysis {{ background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 5px; line-height: 1.6; color: #5d4037; }}
+                    .analysis strong {{ color: #ff9800; }}
                     .footer {{ text-align: center; color: #95a5a6; margin-top: 20px; font-size: 12px; }}
                 </style>
             </head>
@@ -40,14 +43,23 @@ class EmailSender:
                     <h1>🌤️ Weather Forecast for {city}</h1>
                     <p>Here's your tomorrow's weather update from multiple sources:</p>
         """
-        
+
+        # AI Analysis Section (if available)
+        if analysis and analysis.strip():
+            html_body += f"""
+                    <div class="analysis">
+                        <strong>🤖 AI Analysis & Recommendations:</strong><br><br>
+                        {analysis.replace(chr(10), '<br>')}
+                    </div>
+            """
+
         # OpenWeatherMap Section
         if openweather and openweather.get("forecasts"):
             html_body += f"""
                     <h2>OpenWeatherMap Forecast</h2>
                     <p><strong>Location:</strong> {openweather.get('city')}, {openweather.get('country')}</p>
             """
-            
+
             for forecast in openweather.get("forecasts", []):
                 html_body += f"""
                     <div class="forecast">
@@ -59,7 +71,7 @@ class EmailSender:
                         Wind Speed: {forecast['wind_speed']} m/s
                     </div>
                 """
-        
+
         # API Ninjas Section
         if api_ninjas:
             html_body += f"""
@@ -79,7 +91,7 @@ class EmailSender:
                         </ul>
                     </div>
             """
-        
+
         html_body += """
                     <div class="footer">
                         <p>Weather information provided by OpenWeatherMap and API Ninjas</p>
@@ -89,39 +101,53 @@ class EmailSender:
             </body>
         </html>
         """
-        
+
         return html_body
-    
-    def send_email(self, recipient_email: str, city: str, weather_data: Dict) -> bool:
-        """Send weather email to recipient"""
+
+    def send_email(self, recipient_email: str, city: str, weather_data: Dict, analysis: str = "") -> Dict:
+        """Send weather email to recipient with AI analysis.
+
+        Returns a dict: {"success": bool, "error": Optional[str]}
+        """
         try:
             if not all([self.sender_email, self.sender_password]):
-                print("Error: Email credentials not configured")
-                return False
-            
+                msg = "Email credentials not configured (SENDER_EMAIL / SENDER_PASSWORD missing in .env)"
+                print(f"Error: {msg}")
+                return {"success": False, "error": msg}
+
             # Create message
             message = MIMEMultipart("alternative")
             message["Subject"] = f"🌤️ Tomorrow's Weather Forecast for {city}"
             message["From"] = self.sender_email
             message["To"] = recipient_email
-            
-            # Create HTML content
-            html_content = self.create_weather_email_body(city, weather_data)
+
+            # Create HTML content with analysis
+            html_content = self.create_weather_email_body(city, weather_data, analysis)
             html_part = MIMEText(html_content, "html")
             message.attach(html_part)
-            
+
             # Send email
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls()
                 server.login(self.sender_email, self.sender_password)
                 server.send_message(message)
-            
+
             print(f"Email sent successfully to {recipient_email}")
-            return True
-            
+            return {"success": True, "error": None}
+
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"SMTP Auth Error: {e}")
+            msg = (
+                "Gmail rejected the login credentials. If SENDER_PASSWORD is your "
+                "regular Gmail password, Gmail requires an App Password instead: "
+                "enable 2-Step Verification, then generate one at "
+                "myaccount.google.com/apppasswords and put that 16-character value "
+                "in SENDER_PASSWORD."
+            )
+            return {"success": False, "error": msg}
         except smtplib.SMTPException as e:
             print(f"SMTP Error: {e}")
-            return False
+            return {"success": False, "error": f"SMTP error: {e}"}
         except Exception as e:
             print(f"Error sending email: {e}")
-            return False
+            return {"success": False, "error": str(e)}
